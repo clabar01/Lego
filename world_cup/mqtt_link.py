@@ -46,11 +46,11 @@ class MqttLink:
         self.client.loop_stop()
         self.client.disconnect()
 
-    def publish(self, topic, payload, qos=1):
+    def publish(self, topic, payload, qos=1, retain=False):
         """Publish a string, or a dict as JSON. Safe to call from any thread."""
         if isinstance(payload, dict):
             payload = json.dumps(payload, separators=(",", ":"))
-        self.client.publish(topic, payload, qos=qos)
+        self.client.publish(topic, payload, qos=qos, retain=retain)
 
     # -- paho callbacks (run on paho's thread) ---------------------------------
     def _on_connect(self, client, userdata, flags, reason_code, properties):
