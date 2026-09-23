@@ -13,6 +13,7 @@ Stretch goal (two laptops, one robot):
     python main.py --mode robot --role ball    # laptop connected to the robot
     python main.py --mode drive --device 1     # laptop 1: whistles drive
     python main.py --mode aux --device 0       # laptop 2: songs, light, speed profile
+    python main.py --mode defense --device 0   # laptop 2 instead: whistles swing the defense arm
 
 Keys in the display window are listed at the bottom of the window.
 """
@@ -28,8 +29,9 @@ from calibrate import Calibrator
 from display import Display, keyhelp
 from game import Game
 from mqtt_link import MqttLink
-from policy import AuxPolicy, DrivePolicy
-from remote import RobotSideHandler, drive_msg, goal_msg, light_msg, profile_msg, song_msg
+from policy import AuxPolicy, Debouncer, DrivePolicy
+from remote import (RobotSideHandler, defense_msg, drive_msg, goal_msg, light_msg,
+                    profile_msg, song_msg)
 from robot import LegoHardware, RobotController, SimRobot
 from songs import SongPlayer
 from status import Status
@@ -41,10 +43,12 @@ def build_parser():
                    help="list audio input/output devices and exit")
     p.add_argument("--device", type=int, default=None,
                    help="audio input device index (default: system default mic)")
-    p.add_argument("--mode", choices=["single", "robot", "drive", "aux"], default="single",
+    p.add_argument("--mode", choices=["single", "robot", "drive", "aux", "defense"],
+                   default="single",
                    help="single = one laptop does everything (default). Stretch goal: "
                         "robot = laptop connected to the robot, drive = whistles drive "
-                        "it over MQTT, aux = whistles control songs/light/speed profile")
+                        "it over MQTT, aux = whistles control songs/light/speed profile, "
+                        "defense = whistles swing the defense arm")
     p.add_argument("--role", choices=["ball", "goalie"], default="ball",
                    help="which robot we are in the match (default %(default)s)")
     p.add_argument("--calibrate", action="store_true",
@@ -64,13 +68,15 @@ def build_parser():
                    help=f"Connection Card serial (default {config.CARD_SERIAL})")
     p.add_argument("--no-sensor", action="store_true",
                    help="don't connect the color sensor")
+    p.add_argument("--no-defense", action="store_true",
+                   help="--mode robot: don't connect the Single Motor defense arm")
     p.add_argument("--profile", choices=list(config.PROFILES), default=config.DEFAULT_PROFILE,
                    help="speed profile (default %(default)s)")
     # Songs
     p.add_argument("--output-device", type=int, default=None,
                    help="audio output device index for songs (default: system default)")
-    p.add_argument("--hub-songs", action="store_true",
-                   help="also beep the songs on the LEGO hub")
+    p.add_argument("--no-hub-songs", action="store_true",
+                   help="play the victory/death songs on the laptop only, not the robot too")
     # MQTT
     p.add_argument("--no-mqtt", action="store_true",
                    help="offline: don't connect to the broker (press s to start)")
@@ -123,13 +129,14 @@ def run_calibrate(args, status):
         audio.stop()
 
 
-def make_robot(args, status, use_sensor=True):
+def make_robot(args, status, use_sensor=True, use_defense=False):
     """Connect the real robot (or the simulator) and start its thread."""
     use_sensor = use_sensor and not args.no_sensor
     if args.sim:
-        hw = SimRobot(use_sensor=use_sensor)
+        hw = SimRobot(use_sensor=use_sensor, use_defense=use_defense)
     else:
-        hw = LegoHardware(card_serial=args.card, use_sensor=use_sensor)
+        hw = LegoHardware(card_serial=args.card, use_sensor=use_sensor,
+                          use_defense=use_defense)
     hw.connect()
     robot = RobotController(hw, status, profile=args.profile)
     robot.start()
@@ -154,6 +161,22 @@ def robot_keys(robot):
         def obstacle():
             robot.hw.obstacle = not robot.hw.obstacle
         keys["o"] = obstacle
+    return keys
+
+
+def arm_keys(robot):
+    """Robot laptop: test the defense arm directly (not gated by the game)."""
+    keys = {}
+    for key, side in (("j", "left"), ("k", "right"), ("u", "up")):
+        def move(side=side):
+            robot.defend(side)
+        move.help = f"arm {side}"
+        keys[key] = move
+
+    @keyhelp("arm: UP is here")
+    def zero():
+        robot.arm_set_up_here()
+    keys["z"] = zero
     return keys
 
 
@@ -203,7 +226,7 @@ def run_single(args, status):
     status.set(mode="single")
     robot = make_robot(args, status, use_sensor=(args.role == "ball"))
     songs = SongPlayer(args.output_device, status=status,
-                       hub_beep=robot.beep if args.hub_songs else None)
+                       hub_beep=None if args.no_hub_songs else robot.beep)
     game = Game(args.role, status, robot=robot, songs=songs)
     link = make_mqtt(args, status, [config.GAME_TOPIC],
                      on_message=lambda topic, payload: game.handle_message(payload),
@@ -247,12 +270,14 @@ def run_robot_side(args, status):
     if args.no_mqtt:
         sys.exit("--mode robot needs MQTT (remove --no-mqtt)")
     status.set(mode="robot (2-laptop)", decision="WAITING", detail="for drive laptop")
-    robot = make_robot(args, status, use_sensor=(args.role == "ball"))
+    use_defense = not args.no_defense
+    robot = make_robot(args, status, use_sensor=(args.role == "ball"), use_defense=use_defense)
     songs = SongPlayer(args.output_device, status=status,
-                       hub_beep=robot.beep if args.hub_songs else None)
+                       hub_beep=None if args.no_hub_songs else robot.beep)
     game = Game(args.role, status, robot=robot, songs=songs)
     handler = RobotSideHandler(game, robot, songs, status)
-    link = make_mqtt(args, status, [config.GAME_TOPIC, config.DRIVE_TOPIC, config.AUX_TOPIC],
+    link = make_mqtt(args, status, [config.GAME_TOPIC, config.DRIVE_TOPIC, config.AUX_TOPIC,
+                                    config.DEFENSE_TOPIC],
                      on_message=lambda t, p: handler.on_message(t, p, time.monotonic()),
                      on_connect=game.on_connected, name="robot")
     game.publish = link.publish
@@ -276,6 +301,8 @@ def run_robot_side(args, status):
     threading.Thread(target=watch_link, daemon=True).start()
 
     keys = {**robot_keys(robot), **game_keys(game)}
+    if use_defense:
+        keys.update(arm_keys(robot))
     try:
         run_with_display(status, None, keys, f"ME193 robot - {args.role}", args.no_display)
     finally:
@@ -390,6 +417,43 @@ def run_aux_station(args, status):
             link.stop()
 
 
+def run_defense_station(args, status):
+    """Laptop 2 (defense): two whistles swing the defense arm left / right.
+    Uses config.DEFENSE_BANDS (main() swaps them in) instead of the drive bands."""
+    status.set(mode="defense laptop", robot="remote (via MQTT)")
+    game = Game(args.role, status, mirror=True)
+    link = make_mqtt(args, status, [config.GAME_TOPIC],
+                     on_message=lambda t, p: game.handle_message(p), name="defense")
+    if link:
+        link.start()
+    debouncer = Debouncer()
+
+    def swing(side):
+        status.log(f"defense: arm {side}")
+        if link:
+            link.publish(config.DEFENSE_TOPIC, defense_msg(side), qos=1)
+
+    def on_detection(det):
+        confirmed, just = debouncer.update(det.band)
+        label = config.COMMAND_LABELS[confirmed] if confirmed else "NO WHISTLE"
+        status.set(decision=label, progress=debouncer.progress,
+                   detail="low whistle: arm left   high whistle: arm right")
+        if just:
+            swing("left" if confirmed == "DEFEND_LEFT" else "right")
+
+    audio = AudioEngine(args.device, on_detection=on_detection, noise_db=args.noise_db)
+    audio.start()
+    keys = {**audio_keys(audio), **game_keys(game),
+            "j": keyhelp("arm left")(lambda: swing("left")),
+            "k": keyhelp("arm right")(lambda: swing("right"))}
+    try:
+        run_with_display(status, audio, keys, "ME193 defense laptop", args.no_display)
+    finally:
+        audio.stop()
+        if link:
+            link.stop()
+
+
 def main(argv=None):
     args = build_parser().parse_args(argv)
     if args.list_devices:
@@ -398,11 +462,14 @@ def main(argv=None):
     if args.noise_margin is not None:
         config.NOISE_MARGIN_DB = args.noise_margin
     status = Status()
+    if args.mode == "defense":
+        config.BANDS = config.DEFENSE_BANDS    # two wide bands; also for --calibrate
     if args.calibrate:
         run_calibrate(args, status)
     else:
         {"single": run_single, "robot": run_robot_side,
-         "drive": run_drive_station, "aux": run_aux_station}[args.mode](args, status)
+         "drive": run_drive_station, "aux": run_aux_station,
+         "defense": run_defense_station}[args.mode](args, status)
     return 0
 
 

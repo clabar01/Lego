@@ -23,7 +23,7 @@ import config
 @dataclass
 class DriveState:
     """What the car should be doing. Kept tiny so it can be sent over MQTT."""
-    speed_level: int = 0        # 0 = stopped .. config.SPEED_LEVELS
+    speed_level: int = 0        # -1 = backing up, 0 = stopped .. config.SPEED_LEVELS
     steer: int = 0              # -1 = left, 0 = straight, +1 = right
 
     def to_dict(self):
@@ -31,7 +31,7 @@ class DriveState:
 
     @classmethod
     def from_dict(cls, d):
-        level = max(0, min(config.SPEED_LEVELS, int(d.get("speed_level", 0))))
+        level = max(-1, min(config.SPEED_LEVELS, int(d.get("speed_level", 0))))
         steer = max(-1, min(1, int(d.get("steer", 0))))
         return cls(level, steer)
 
@@ -156,6 +156,8 @@ class DrivePolicy:
         STOP        speed level 0, straight
         TURN_LEFT   steer left for as long as the whistle is held
         TURN_RIGHT  steer right for as long as the whistle is held
+        BACKWARD    back up slowly and straight for as long as the whistle is held
+                    (stops BACKWARD_HOLD_S after it ends)
 
     No valid whistle (see README "When no whistle is detected"):
         1. A turn keeps going for TURN_HOLD_S after the whistle ends (bridges
@@ -177,6 +179,7 @@ class DrivePolicy:
         self.goal.reset()
         self._last_whistle_t = t
         self._last_turn_t = t
+        self._last_back_t = t
         self._last_speed_bump_t = t
         self._last_slowdown_t = t
 
@@ -191,24 +194,31 @@ class DrivePolicy:
             self._last_whistle_t = t
             if confirmed == "SPEED_UP":
                 if just or t - self._last_speed_bump_t >= config.SPEED_REPEAT_S:
-                    d.speed_level = min(config.SPEED_LEVELS, d.speed_level + 1)
+                    d.speed_level = min(config.SPEED_LEVELS, max(d.speed_level, 0) + 1)
                     d.steer = 0
                     self._last_speed_bump_t = t
                     fired = confirmed
             elif confirmed == "STOP":
                 d.speed_level, d.steer = 0, 0
                 fired = confirmed if just else None
+            elif confirmed == "BACKWARD":
+                d.speed_level, d.steer = -1, 0
+                self._last_back_t = t
+                fired = confirmed if just else None
             elif confirmed in ("TURN_LEFT", "TURN_RIGHT"):
                 d.steer = -1 if confirmed == "TURN_LEFT" else 1
                 self._last_turn_t = t
                 fired = confirmed if just else None
             decision = config.COMMAND_LABELS[confirmed]
-            detail = f"speed level {d.speed_level}/{config.SPEED_LEVELS}"
+            detail = ("backing up" if d.speed_level < 0
+                      else f"speed level {d.speed_level}/{config.SPEED_LEVELS}")
         else:
             # ---- NO WHISTLE ---------------------------------------------
             decision = "NO WHISTLE"
             if d.steer != 0 and t - self._last_turn_t > config.TURN_HOLD_S:
                 d.steer = 0                                  # rule 1
+            if d.speed_level < 0 and t - self._last_back_t > config.BACKWARD_HOLD_S:
+                d.speed_level = 0                            # backing up only while held
             silent = t - self._last_whistle_t
             if d.speed_level > 0 and silent > config.NO_WHISTLE_TIMEOUT_S:
                 if t - self._last_slowdown_t >= config.SLOWDOWN_STEP_S:   # rule 3
@@ -218,6 +228,8 @@ class DrivePolicy:
             elif d.speed_level > 0:
                 self._last_slowdown_t = t
                 detail = "holding turn" if d.steer else "cruising at current speed"
+            elif d.speed_level < 0:
+                detail = "backing up"
             else:
                 detail = "stopped"
 
@@ -249,6 +261,7 @@ class AuxPolicy:
         "STOP": "PROFILE -",
         "TURN_LEFT": "NEXT LIGHT",
         "TURN_RIGHT": "CHEER SONG",
+        "BACKWARD": None,           # no aux action
     }
 
     def __init__(self, frame_s=config.FRAME_S):
@@ -257,8 +270,7 @@ class AuxPolicy:
     def update(self, band):
         """Returns (action or None, display label)."""
         confirmed, just = self.debouncer.update(band)
-        if just:
-            return self.ACTIONS[confirmed], self.ACTIONS[confirmed]
         if confirmed:
-            return None, self.ACTIONS[confirmed]
+            action = self.ACTIONS.get(confirmed)
+            return (action if just else None), action or "(unused)"
         return None, "NO WHISTLE"

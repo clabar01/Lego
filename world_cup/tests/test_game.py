@@ -64,7 +64,7 @@ def test_no_driving_before_start():
 def test_other_teams_messages_ignored():
     g, _, songs, _ = make("goalie")
     g.handle_message("start")
-    for msg in ["bob_caught", "alice_scored", "hello", "robot_caught"]:
+    for msg in ["bob_caught", "alice_scored", "hello", f"not{config.MATCH_PREFIX}_caught"]:
         g.handle_message(msg)
     assert g.state == PLAYING and songs.played == []
 

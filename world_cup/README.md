@@ -109,9 +109,9 @@ The first 2 seconds of every run **measure the room's background noise, so stay 
 | `--noise-db X` | Fixed volume threshold in dBFS. Skips the ambient-noise measurement. |
 | `--noise-margin X` | How many dB above the room noise a whistle must be (default 12). |
 | `--output-device N` | Speaker for the songs. |
-| `--hub-songs` | Also beep the songs on the LEGO hub. |
+| `--no-hub-songs` | Play the victory/death songs on the laptop only. By default they also beep on the robot's Double Motor at the same time. |
 | `--no-display` | Console only, no window. |
-| `--mode single\|robot\|drive\|aux` | Stretch goal, see section 6. Default `single`. |
+| `--mode single\|robot\|drive\|aux\|defense` | Stretch goal, see section 6. Default `single`. |
 
 **AirPods:** in microphone mode AirPods switch to a low "call quality" sample rate (16 or 24 kHz instead of 48 kHz). The code asks the device which rates it supports and uses one of those, so nothing special is needed. The whistle range (up to 4 kHz) is well below the 8 kHz limit even at 16 kHz.
 
@@ -151,14 +151,15 @@ The first 2 seconds of every run **measure the room's background noise, so stay 
 
 ## 2. Decision policy: how pitch and volume become commands
 
-Every 50 ms the code finds the **strongest pitch between 500 Hz and 4 kHz**. If that pitch passes the noise filters (section 4), its frequency band decides the command:
+Every 50 ms the code finds the **strongest pitch between 500 Hz and 4 kHz**. All command bands sit inside one octave, C6 to C7 (1047–2093 Hz). If that pitch passes the noise filters (section 4), its frequency band decides the command:
 
 | Whistle | Frequency band (default, tune in `config.py`) | Command |
 |---|---|---|
-| Low | 500 – 1000 Hz | **STOP**: speed goes to 0, wheels straight |
-| Lower middle | 1050 – 1400 Hz | **TURN LEFT** for as long as you hold it |
-| Upper middle | 1450 – 1850 Hz | **TURN RIGHT** for as long as you hold it |
-| High | 1900 – 4000 Hz | **SPEED UP**: one speed level faster (holding it adds another level every 0.8 s) |
+| Lowest (C6 – D6) | 1047 – 1180 Hz | **STOP**: speed goes to 0, wheels straight |
+| Low middle (D#6 – E6) | 1225 – 1355 Hz | **BACKWARD**: back up slowly and straight while you hold it (stops 0.5 s after) |
+| Middle (F6 – G6) | 1405 – 1555 Hz | **TURN LEFT** for as long as you hold it |
+| High middle (G#6 – A6) | 1615 – 1785 Hz | **TURN RIGHT** for as long as you hold it |
+| Highest (A#6 – C7) | 1860 – 2093 Hz | **SPEED UP**: one speed level faster (holding it adds another level every 0.8 s) |
 | Two short high "tweets" | high band, each shorter than 0.4 s | **GOAL** (ball only): we scored |
 
 The small gaps between bands are **guard bands**. A pitch right on a boundary counts as "no whistle" instead of flickering between two commands.
@@ -284,3 +285,32 @@ Keys `1` `2` `3`, `l` and `c` do the same things.
 | `.../ceci/aux` | `{"type":"song","name":"cheer"}` | Victory and death are reserved for the game and are never interrupted. |
 
 The robot laptop still runs the full game logic (start gating, light sensor, `ceci_caught` / `ceci_scored`, songs).
+
+### Driver + defender: one drives, one runs the defense arm
+
+A LEGO Single Motor on top of the robot swings a defense arm. One person whistles to drive (Double Motor). The other person whistles to swing the arm.
+
+```
+ Laptop 1 (driver)    python main.py --mode robot --role ball      (terminal 1, Bluetooth to the robot)
+                      python main.py --mode drive --device N       (terminal 2)
+ Laptop 2 (defender)  python main.py --mode defense --device N
+```
+
+**Defense whistles** (`DEFENSE_BANDS` in `config.py`, tune with `python main.py --mode defense --calibrate`):
+
+| Whistle | Hz | Arm |
+|---|---|---|
+| Low (C6 – F#6) | 1047 – 1480 | Swings all the way LEFT |
+| High (G6 – C7) | 1570 – 2093 | Swings all the way RIGHT |
+
+Keys `j` / `k` do the same. The arm only moves while the game is PLAYING, like driving.
+
+**The arm never enters the bottom third.** The light sensor sits under the motor, so the arm stays out of the bottom 120° of its circle. It swings between −110° and +110° from straight up, which leaves the forbidden 120° plus a 10° safety margin on each side. It always swings over the top to reach the other side. At startup the robot reads the motor's absolute position, sets "degrees from straight up" as the motor's relative position (a counter that doesn't wrap at 360°), and then only ever moves between −110 and +110 on that counter. The arm holds its position when hit.
+
+**Setup, once:** on the robot laptop, turn the arm straight up by hand and press `z`. The log prints `DEFENSE_UP_POSITION = N`. Put that number in `config.py` so the arm knows where "up" is on every run. Then test with `j` (left), `k` (right) and `u` (up). If `j` swings right, set `DEFENSE_LEFT_SIGN = 1`. Change `DEFENSE_FORBIDDEN_DEG`, `DEFENSE_MARGIN_DEG` and `DEFENSE_SPEED` to adjust the swing.
+
+| Topic | Message | Notes |
+|---|---|---|
+| `.../<prefix>/defense` | `{"type":"defense","side":"left"}` | QoS 1, one per confirmed whistle. |
+
+Use `--no-defense` on the robot laptop if the Single Motor isn't attached.

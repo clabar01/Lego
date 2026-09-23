@@ -24,7 +24,7 @@ from matplotlib.patches import Rectangle
 import config
 
 # Colors: text stays neutral ink; each command band has one fixed hue
-# (validated categorical palette, slots 1-4, fixed order).
+# (validated categorical palette, slots 1-5, fixed order).
 INK = "#0b0b0b"
 INK_2 = "#52514e"
 MUTED = "#8a8984"
@@ -32,9 +32,12 @@ SURFACE = "#fcfcfb"
 GRID = "#e6e5e0"
 BAND_COLORS = {
     "STOP": "#2a78d6",        # blue
+    "BACKWARD": "#8a5cd6",    # violet
     "TURN_LEFT": "#eb6834",   # orange
     "TURN_RIGHT": "#1baf7a",  # aqua
     "SPEED_UP": "#eda100",    # yellow
+    "DEFEND_LEFT": "#eb6834",   # defense laptop: same hues as the turns
+    "DEFEND_RIGHT": "#1baf7a",
 }
 GOOD = "#008300"
 BAD = "#e34948"
@@ -266,7 +269,7 @@ class Display:
         self.game_sub.set_text(f"role: {s['role']}    mode: {s['mode']}")
 
         level = s["speed_level"]
-        bar = "#" * level + "." * (config.SPEED_LEVELS - level)
+        bar = "REVERSE" if level < 0 else "#" * level + "." * (config.SPEED_LEVELS - level)
         steer = {-1: "LEFT", 0: "straight", 1: "RIGHT"}[s["steer"]]
         wl, wr = s["wheels"]
         refl = s["reflection"]

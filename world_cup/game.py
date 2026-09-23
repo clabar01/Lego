@@ -73,7 +73,8 @@ class Game:
 
     def handle_message(self, payload):
         """A message on GAME_TOPIC. Anything not for our match is ignored."""
-        msg = payload.strip()
+        msg = payload.strip().strip('"\'').lower()   # "Start", '"start"' etc. all count
+        self.status.log(f"MQTT in: {payload!r}")
         if msg in (config.MSG_START, f"{config.MATCH_PREFIX}_start"):
             self.start()
         elif msg == config.MSG_RESET:

@@ -92,16 +92,23 @@ PEAK_SHARE_MIN = 0.5
 # pitch that lands on a boundary counts as no whistle instead of flickering
 # between two commands. Run `python main.py --calibrate`, whistle your low,
 # middle and high notes, and adjust these numbers to fit YOUR whistle.
+# All five bands fit between C6 (1047 Hz) and C7 (2093 Hz), one octave, each
+# about 2.4 semitones wide. The guard gaps grow with pitch because a whistle's
+# wobble does too.
 BANDS = [
-    ("STOP",       500, 1000),   # low whistle
-    ("TURN_LEFT",  1050, 1400),  # lower middle
-    ("TURN_RIGHT", 1450, 1850),  # upper middle
-    ("SPEED_UP",   1900, 4000),  # high whistle
+    ("STOP",       1047, 1180),  # lowest whistle   (C6 - D6)
+    ("BACKWARD",   1225, 1355),  # low middle       (D#6 - E6)
+    ("TURN_LEFT",  1405, 1555),  # middle           (F6 - G6)
+    ("TURN_RIGHT", 1615, 1785),  # high middle      (G#6 - A6)
+    ("SPEED_UP",   1860, 2093),  # highest whistle  (A#6 - C7)
 ]
 
 # Human-friendly labels shown on screen.
 COMMAND_LABELS = {
     "STOP": "STOP",
+    "BACKWARD": "BACKWARD",
+    "DEFEND_LEFT": "ARM LEFT",      # defense laptop only (DEFENSE_BANDS)
+    "DEFEND_RIGHT": "ARM RIGHT",
     "TURN_LEFT": "TURN LEFT",
     "TURN_RIGHT": "TURN RIGHT",
     "SPEED_UP": "SPEED UP",
@@ -138,6 +145,7 @@ GOAL_WINDOW_S = 1.5         # start of tweet 1 to end of tweet 2
 #   - After NO_WHISTLE_TIMEOUT_S with no confirmed whistle, the car slows down
 #     one speed level every SLOWDOWN_STEP_S until it stops.
 TURN_HOLD_S = 0.5
+BACKWARD_HOLD_S = 0.5       # backing up stops this long after the whistle ends
 NO_WHISTLE_TIMEOUT_S = 4.0
 SLOWDOWN_STEP_S = 1.0
 
@@ -175,17 +183,42 @@ PROXIMITY_MIN_ABS = 20
 PROXIMITY_HOLD_FRAMES = 2
 
 # ============================================================================
+# DEFENSE ARM (Single Motor on top of the robot, run by the defense laptop)
+# ============================================================================
+# The defense laptop (--mode defense) only needs two whistles, so it uses its
+# own two wide bands instead of BANDS: low half of C6-C7 = arm left, high half
+# = arm right. Each whistle swings the arm all the way to that side.
+DEFENSE_BANDS = [
+    ("DEFEND_LEFT",  1047, 1480),   # low whistle  (C6 - F#6)
+    ("DEFEND_RIGHT", 1570, 2093),   # high whistle (G6 - C7)
+]
+
+# Angles are measured from the arm pointing straight UP (0 deg). The light
+# sensor sits under the motor, so the arm must never enter the bottom third
+# of the circle: DEFENSE_FORBIDDEN_DEG centered on straight down. The arm
+# swings between -DEFENSE_LIMIT_DEG and +DEFENSE_LIMIT_DEG, and always moves
+# THROUGH THE TOP to get from one side to the other (never through the bottom).
+DEFENSE_UP_POSITION = 0         # motor's absolute position (0-359) when the arm points
+                                # straight up. Find it: point the arm up by hand on the
+                                # robot laptop and press z; it prints the number.
+DEFENSE_FORBIDDEN_DEG = 120     # bottom third of the circle
+DEFENSE_MARGIN_DEG = 10         # extra safety gap before the forbidden zone
+DEFENSE_LIMIT_DEG = 180 - DEFENSE_FORBIDDEN_DEG / 2 - DEFENSE_MARGIN_DEG   # = 110
+DEFENSE_SPEED = 60              # motor % while swinging
+DEFENSE_LEFT_SIGN = -1          # if "ARM LEFT" swings right, change this to 1
+
+# ============================================================================
 # MQTT
 # ============================================================================
 # Development broker. Swap these two lines for the professor's broker.
-BROKER_HOST = "broker.hivemq.com"
+BROKER_HOST = "test.mosquitto.org"
 BROKER_PORT = 1883
 
 GAME_TOPIC = "ME193/Rogers"
 
 # The whole class shares GAME_TOPIC, so our messages carry our match name.
 # Change MATCH_PREFIX here and every message/topic below follows.
-MATCH_PREFIX = "ceci"
+MATCH_PREFIX = "robot"
 
 MSG_START = "start"                         # sent by the professor / referee
 MSG_READY = f"{MATCH_PREFIX}_ready"         # each robot, when waiting for start
@@ -198,12 +231,16 @@ DRIVE_TOPIC = f"{GAME_TOPIC}/{MATCH_PREFIX}/drive"
 AUX_TOPIC = f"{GAME_TOPIC}/{MATCH_PREFIX}/aux"
 DRIVE_PUBLISH_HZ = 10           # drive laptop re-sends its state this often
 DRIVE_LINK_TIMEOUT_S = 1.0      # robot stops if the drive laptop goes quiet this long
+DEFENSE_TOPIC = f"{GAME_TOPIC}/{MATCH_PREFIX}/defense"   # defense laptop -> arm
 
 # ============================================================================
 # SONGS & DISPLAY
 # ============================================================================
 SONG_SAMPLE_RATE = 44100
 SONG_VOLUME = 0.35              # 0..1, laptop speaker volume of the songs
+# Songs that ALSO beep on the robot's Double Motor buzzer, note by note, at the
+# same time as the laptop plays them (turn off with --no-hub-songs).
+HUB_SONGS = ("victory", "death")
 HUB_LIGHT_COLORS = ["BLUE", "GREEN", "YELLOW", "MAGENTA", "AZURE", "ORANGE", "WHITE"]
 
 DISPLAY_FPS = 15
@@ -224,6 +261,10 @@ def validate():
     for name, lo, hi in BANDS:
         assert WHISTLE_MIN_HZ <= lo < hi <= WHISTLE_MAX_HZ, f"band {name} outside bandpass"
     assert DEFAULT_PROFILE in PROFILES
+    assert 0 < DEFENSE_LIMIT_DEG <= 180 - DEFENSE_FORBIDDEN_DEG / 2, (
+        "DEFENSE_LIMIT_DEG would let the arm into the forbidden bottom zone")
+    for name, lo, hi in DEFENSE_BANDS:
+        assert WHISTLE_MIN_HZ <= lo < hi <= WHISTLE_MAX_HZ, f"band {name} outside bandpass"
 
 
 validate()

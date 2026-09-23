@@ -4,6 +4,7 @@ Stretch goal: split control of ONE robot across TWO laptops over MQTT.
     Laptop 1 (--mode drive)  whistles -> DRIVE state   -> ME193/Rogers/<prefix>/drive
     Laptop 2 (--mode aux)    whistles -> songs / light / speed profile
                                                          -> ME193/Rogers/<prefix>/aux
+    Laptop 2 (--mode defense) whistles -> defense arm   -> ME193/Rogers/<prefix>/defense
     Robot laptop (--mode robot)  subscribes to both + the game topic, owns the
                                  Bluetooth connection, runs the game logic.
 
@@ -22,11 +23,16 @@ Message format: small JSON objects.
                                           that restarts picks up the last choice)
     {"type": "light", "color": "GREEN"}   hub light color
     {"type": "song", "name": "cheer"}     play a song on the robot laptop
+
+  defense topic
+    {"type": "defense", "side": "left"|"right"}   swing the arm (QoS 1). Only
+                                          while the game is PLAYING, like driving.
 """
 
 import json
 
 import config
+from game import PLAYING
 from policy import DriveState
 
 SONGS_ALLOWED_FROM_AUX = ("cheer",)     # victory/death stay reserved for the game
@@ -51,6 +57,10 @@ def light_msg(color):
 
 def song_msg(name):
     return {"type": "song", "name": name}
+
+
+def defense_msg(side):
+    return {"type": "defense", "side": side}
 
 
 def parse(payload):
@@ -100,3 +110,10 @@ class RobotSideHandler:
                 # A game-over song already playing is never cut off by aux.
                 if not self.songs.play(msg["name"], interrupt=False):
                     self.status.log("aux: song ignored (another song is playing)")
+        elif topic == config.DEFENSE_TOPIC:
+            if kind == "defense" and msg.get("side") in ("left", "right"):
+                if self.game.state != PLAYING:
+                    self.status.log(f"defense: ignored - game is {self.game.state}")
+                    return
+                self.robot.defend(msg["side"])
+                self.status.log(f"defense: arm {msg['side']}")

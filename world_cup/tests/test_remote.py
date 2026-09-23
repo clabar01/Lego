@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import config                                              # noqa: E402
 from game import PLAYING, WON, Game                        # noqa: E402
 from policy import DriveState                              # noqa: E402
-from remote import (RobotSideHandler, drive_msg, goal_msg,  # noqa: E402
+from remote import (RobotSideHandler, defense_msg, drive_msg, goal_msg,  # noqa: E402
                     light_msg, profile_msg, song_msg)
 from status import Status                                  # noqa: E402
 
@@ -17,6 +17,7 @@ from status import Status                                  # noqa: E402
 class FakeRobot:
     def __init__(self):
         self.drives, self.profiles, self.lights, self.halts = [], [], [], 0
+        self.arm = []
         self.on_proximity, self.proximity_enabled = None, False
 
     def set_drive(self, drive, ttl=None):
@@ -30,6 +31,9 @@ class FakeRobot:
 
     def light(self, color, pattern="SOLID"):
         self.lights.append(color)
+
+    def defend(self, side):
+        self.arm.append(side)
 
 
 class FakeSongs:
@@ -91,3 +95,14 @@ def test_bad_and_disallowed_messages_ignored():
 def test_drive_state_clamped():
     d = DriveState.from_dict({"speed_level": 99, "steer": -7})
     assert d.speed_level == config.SPEED_LEVELS and d.steer == -1
+
+
+def test_defense_only_while_playing():
+    h, game, robot, _, _ = setup()
+    send(h, config.DEFENSE_TOPIC, defense_msg("left"))
+    assert robot.arm == []                          # waiting for start
+    send(h, config.GAME_TOPIC, "start")
+    send(h, config.DEFENSE_TOPIC, defense_msg("left"))
+    send(h, config.DEFENSE_TOPIC, defense_msg("right"))
+    send(h, config.DEFENSE_TOPIC, {"type": "defense", "side": "down"})   # rejected
+    assert robot.arm == ["left", "right"]

@@ -92,3 +92,61 @@ def test_notes_and_songs():
         assert data.dtype.name == "int16" and abs(data).max() > 1000
         # songs stay under the hub's 2700 Hz beep limit
         assert all(note_hz(n) < 2700 for n, _ in SONGS[name])
+
+
+def test_backward_runs_both_wheels_in_reverse():
+    from robot import wheel_speeds
+    left, right = wheel_speeds(DriveState(-1, 0), "medium")
+    assert left == right == -config.MIN_DRIVE_SPEED
+
+
+def test_victory_and_death_also_beep_on_robot(monkeypatch):
+    from songs import SongPlayer
+    hub = []
+    monkeypatch.setattr(SongPlayer, "_play_laptop", lambda self, song: None)
+    monkeypatch.setattr(SongPlayer, "_play_hub", lambda self, song: hub.append(song))
+    player = SongPlayer(hub_beep=lambda hz: None)
+    for song in ("victory", "death", "cheer"):
+        player.play(song)
+    time.sleep(0.1)
+    assert sorted(hub) == ["death", "victory"]
+
+
+# ---------------------------------------------------------------- defense arm
+
+def _in_forbidden_zone(angle_from_up_deg):
+    """Bottom third: within DEFENSE_FORBIDDEN_DEG/2 of straight down."""
+    from_down = abs((angle_from_up_deg % 360) - 180)
+    return from_down < config.DEFENSE_FORBIDDEN_DEG / 2
+
+
+def test_defense_targets_and_swing_path_avoid_bottom_third():
+    from robot import defense_target
+    left, right = defense_target("left"), defense_target("right")
+    assert left == -right and defense_target("up") == 0
+    # The relative counter doesn't wrap, so a swing visits every angle
+    # between the two targets - through the top, never through the bottom.
+    lo, hi = min(left, right), max(left, right)
+    assert not any(_in_forbidden_zone(a) for a in range(lo, hi + 1))
+    assert _in_forbidden_zone(180)                     # sanity check of the helper
+
+
+def test_angle_from_up_wraps_to_signed_degrees():
+    from robot import angle_from_up
+    assert angle_from_up(0, up=0) == 0
+    assert angle_from_up(350, up=0) == -10
+    assert angle_from_up(10, up=350) == 20
+    assert angle_from_up(180, up=0) == -180
+
+
+def test_controller_moves_sim_arm(capsys):
+    sim = SimRobot(use_sensor=False, use_defense=True)
+    ctl = RobotController(sim, Status())
+    ctl.start()
+    try:
+        ctl.defend("left")
+        time.sleep(0.2)
+    finally:
+        ctl.stop()
+    from robot import defense_target
+    assert f"defense arm -> {defense_target('left'):+d}" in capsys.readouterr().out

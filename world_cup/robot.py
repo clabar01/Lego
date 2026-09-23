@@ -3,6 +3,7 @@ Robot control: LEGO Education Double Motor + forward-facing Color Sensor.
 
     wheel_speeds()       pure function: DriveState + profile -> (left %, right %)
     ProximityDetector    "is the goalie right in front of me?" from reflection
+    defense_target()     pure function: "left"/"right"/"up" -> arm angle (deg from up)
     LegoHardware         the real BLE devices (legoeducation library)
     SimRobot             stand-in with the same interface, for testing anywhere
     RobotController      background thread that owns the hardware
@@ -39,6 +40,9 @@ def level_to_speed(level, profile):
 def wheel_speeds(drive, profile):
     """(left, right) motor % for a drive state. Positive = forward."""
     p = config.PROFILES[profile]
+    if drive.speed_level < 0:
+        s = level_to_speed(-drive.speed_level, profile)
+        return -s, -s               # backing up: straight, slowest level
     if drive.speed_level <= 0:
         if drive.steer == 0:
             return 0, 0
@@ -52,6 +56,21 @@ def wheel_speeds(drive, profile):
     if drive.steer > 0:
         return speed, inner
     return speed, speed
+
+
+def defense_target(side):
+    """Arm angle for a side, in degrees from straight up. Never inside the
+    forbidden bottom zone (see DEFENSE_* in config.py)."""
+    if side == "up":
+        return 0
+    sign = config.DEFENSE_LEFT_SIGN if side == "left" else -config.DEFENSE_LEFT_SIGN
+    return round(sign * config.DEFENSE_LIMIT_DEG)
+
+
+def angle_from_up(absolute, up=None):
+    """Motor absolute position (0-359) -> signed degrees from up, -180..179."""
+    up = config.DEFENSE_UP_POSITION if up is None else up
+    return (round(absolute) - up + 180) % 360 - 180
 
 
 class ProximityDetector:
@@ -115,7 +134,7 @@ def _connect(device, what, serial, color):
 
 class LegoHardware:
     def __init__(self, card_serial=config.CARD_SERIAL, card_color=config.CARD_COLOR,
-                 use_sensor=True):
+                 use_sensor=True, use_defense=False):
         import legoeducation as le      # imported here so laptops without BLE can run stations
         self.le = le
         self.card_serial = card_serial
@@ -123,6 +142,7 @@ class LegoHardware:
         self.use_sensor = use_sensor
         self.dm = le.DoubleMotor()
         self.sensor = le.ColorSensor() if use_sensor else None
+        self.arm = le.SingleMotor() if use_defense else None
         self.name = f"LEGO card {card_serial}"
 
     def connect(self):
@@ -133,6 +153,43 @@ class LegoHardware:
             print(f"Connecting to Color Sensor (card {self.card_serial})...")
             _connect(self.sensor, "Color Sensor", self.card_serial, self.card_color)
             print("Color Sensor connected.")
+        if self.arm:
+            print(f"Connecting to Single Motor / defense arm (card {self.card_serial})...")
+            _connect(self.arm, "Single Motor", self.card_serial, self.card_color)
+            self._zero_arm()
+
+    def _zero_arm(self):
+        """Make the motor's RELATIVE position = signed degrees from straight up.
+        The relative counter doesn't wrap at 360, so moving between -110 and
+        +110 always passes through 0 (the top), never through the bottom."""
+        absolute = float("nan")
+        for _ in range(20):                 # the first notification takes a moment
+            absolute = self.arm.motor.absolutePosition
+            if absolute == absolute:        # not NaN
+                break
+            time.sleep(0.1)
+        if absolute == absolute:
+            offset = angle_from_up(absolute)
+            print(f"Defense arm connected: absolute {absolute:.0f}, {offset:+d} deg from up.")
+        else:
+            offset = 0
+            print("Defense arm connected, position unknown - assuming it points UP.")
+        self.arm.motor_reset_relative_position(position=offset)
+        self.arm.motor_set_end_state(self.le.MOTOR_END_STATE_HOLD)   # hold against hits
+
+    def arm_to(self, angle):
+        if self.arm:
+            self.arm.motor_run_to_relative_position(int(angle), speed=config.DEFENSE_SPEED,
+                                                    blocking=False)
+
+    def arm_set_up_here(self):
+        """The arm points straight up right now: make this 0. Returns the
+        absolute position to put in config.DEFENSE_UP_POSITION."""
+        if not self.arm:
+            return None
+        self.arm.motor_stop()
+        self.arm.motor_reset_relative_position(position=0)
+        return self.arm.motor.absolutePosition
 
     def set_wheels(self, left, right):
         le = self.le
@@ -163,7 +220,7 @@ class LegoHardware:
         self.dm.beep(frequency=int(max(0, min(2700, frequency))), blocking=False)
 
     def disconnect(self):
-        for dev in (self.dm, self.sensor):
+        for dev in (self.dm, self.sensor, self.arm):
             if dev is not None:
                 try:
                     dev.disconnect()
@@ -175,8 +232,9 @@ class SimRobot:
     """Pretend robot: same interface as LegoHardware, prints instead of driving.
     Press 'o' in the display to put a fake obstacle in front of the sensor."""
 
-    def __init__(self, use_sensor=True):
+    def __init__(self, use_sensor=True, use_defense=False):
         self.use_sensor = use_sensor
+        self.use_defense = use_defense
         self.obstacle = False
         self.name = "simulated"
         self._last = None
@@ -202,6 +260,13 @@ class SimRobot:
 
     def beep(self, frequency):
         pass
+
+    def arm_to(self, angle):
+        if self.use_defense:
+            print(f"[sim] defense arm -> {angle:+d} deg from up")
+
+    def arm_set_up_here(self):
+        return 0 if self.use_defense else None
 
     def disconnect(self):
         pass
@@ -257,6 +322,13 @@ class RobotController:
     def beep(self, frequency):
         self._requests.put(("beep", frequency))
 
+    def defend(self, side):
+        """Swing the defense arm: side = "left", "right" or "up"."""
+        self._requests.put(("arm", side))
+
+    def arm_set_up_here(self):
+        self._requests.put(("arm_zero",))
+
     # -- lifecycle -----------------------------------------------------------------
     def start(self):
         self._thread = threading.Thread(target=self._run, name="robot", daemon=True)
@@ -294,7 +366,7 @@ class RobotController:
             self._last_sent = (0, 0)
             self.on_proximity()
 
-        # 2) Queued light / beep requests.
+        # 2) Queued light / beep / defense arm requests.
         while True:
             try:
                 req = self._requests.get_nowait()
@@ -304,6 +376,14 @@ class RobotController:
                 self.hw.light(req[1], req[2])
             elif req[0] == "beep":
                 self.hw.beep(req[1])
+            elif req[0] == "arm":
+                self.hw.arm_to(defense_target(req[1]))
+                self.status.set(arm=req[1])
+            elif req[0] == "arm_zero":
+                absolute = self.hw.arm_set_up_here()
+                if absolute is not None:
+                    self.status.log(f"arm: UP set here. For next time put "
+                                    f"DEFENSE_UP_POSITION = {absolute:.0f} in config.py")
 
         # 3) Drive.
         with self._lock:

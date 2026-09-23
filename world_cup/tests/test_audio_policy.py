@@ -47,7 +47,7 @@ def detector(rate):
 # ---------------------------------------------------------------- detection
 
 @pytest.mark.parametrize("rate", [48000, 44100, 24000, 16000])
-@pytest.mark.parametrize("hz", [700, 1200, 1650, 2500])
+@pytest.mark.parametrize("hz", [700, 1100, 1300, 1480, 1700, 2000, 2500])
 def test_detects_whistle_pitch_at_any_rate(rate, hz):
     det = detector(rate).analyze(whistle(rate, hz))
     assert det.loud and det.tonal
@@ -86,14 +86,17 @@ def test_low_hum_ignored_by_bandpass():
     # A loud 120 Hz motor hum plus a modest whistle: the hum is out of band.
     rate = 48000
     x = frame(rate, lambda t: 0.8 * np.sin(2 * np.pi * 120 * t)
-              + 0.1 * np.sin(2 * np.pi * 2200 * t))
+              + 0.1 * np.sin(2 * np.pi * 2000 * t))
     det = detector(rate).analyze(x)
-    assert abs(det.pitch_hz - 2200) < 5 and det.band == "SPEED_UP"
+    assert abs(det.pitch_hz - 2000) < 5 and det.band == "SPEED_UP"
 
 
 def test_guard_gap_is_no_band():
-    assert band_for(1025) is None
-    assert band_for(900) == "STOP"
+    assert band_for(1025) is None           # below C6
+    assert band_for(1200) is None           # guard gap STOP / BACKWARD
+    assert band_for(1100) == "STOP"
+    assert band_for(1300) == "BACKWARD"
+    assert band_for(2200) is None           # above C7
 
 
 def test_ambient_threshold_floor():
@@ -213,3 +216,18 @@ def test_aux_policy_fires_once_per_whistle():
     a = AuxPolicy()
     actions = [a.update("TURN_LEFT")[0] for _ in range(n(1.5))]
     assert [x for x in actions if x] == ["NEXT LIGHT"]
+
+
+def test_backward_while_held_then_stops():
+    p = DrivePolicy()
+    outs, _ = feed(p, ["BACKWARD"] * n(config.DEBOUNCE_S + 0.3))
+    assert outs[-1].drive.speed_level == -1 and outs[-1].decision == "BACKWARD"
+    outs, _ = feed(p, [None] * n(config.BACKWARD_HOLD_S + 0.2), t0=1.0)
+    assert outs[-1].drive.speed_level == 0
+
+
+def test_speed_up_from_reverse_goes_forward():
+    p = DrivePolicy()
+    feed(p, ["BACKWARD"] * n(config.DEBOUNCE_S + 0.1) + [None] * 2)
+    outs, _ = feed(p, ["SPEED_UP"] * n(config.DEBOUNCE_S + 0.1), t0=1.0)
+    assert outs[-1].drive.speed_level == 1

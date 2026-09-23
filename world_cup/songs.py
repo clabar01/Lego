@@ -5,9 +5,10 @@ Songs: short melodies synthesized with numpy and played through pyaudio.
     death     "sad trombone" wah-wah-wah-waaah (we lost)
     cheer     short arpeggio (stretch goal: laptop 2 can trigger it)
 
-Songs play on a background thread so nothing waits for them. Optionally the
-same notes are also beeped on the LEGO hub (--hub-songs); the hub can only
-play a fixed-length beep per note, so it sounds rougher.
+Songs play on a background thread so nothing waits for them. The songs in
+config.HUB_SONGS (victory and death) are also beeped on the robot's Double
+Motor at the same time (turn off with --no-hub-songs); it can only play a
+fixed-length beep per note, so it sounds rougher.
 """
 
 import threading
@@ -76,7 +77,7 @@ class SongPlayer:
     output_device   pyaudio output index (None = system default)
     on_play         callback(seconds) before a song starts - used to mute the
                     microphone so our own song isn't heard as whistles
-    hub_beep        callable(freq) to also beep each note on the LEGO hub, or None
+    hub_beep        callable(freq) to also beep config.HUB_SONGS on the robot, or None
     """
 
     def __init__(self, output_device=None, on_play=None, hub_beep=None, status=None):
@@ -103,7 +104,7 @@ class SongPlayer:
         if self.status:
             self.status.log(f"song: {song}")
         threading.Thread(target=self._play_laptop, args=(song,), daemon=True).start()
-        if self.hub_beep:
+        if self.hub_beep and song in config.HUB_SONGS:
             threading.Thread(target=self._play_hub, args=(song,), daemon=True).start()
         return True
 
