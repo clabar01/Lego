@@ -34,6 +34,9 @@ class FakeRobot:
     def light(self, color, pattern="SOLID"):
         self.calls.append(("light", color))
 
+    def defend(self, side):
+        self.calls.append(("defend", side))
+
 
 class FakeSongs:
     def __init__(self):
@@ -162,3 +165,12 @@ def test_live_mqtt_round_trip(monkeypatch):
     finally:
         for l in links:
             l.stop()
+
+
+def test_game_over_sends_defense_arm_to_zero():
+    for role, msg in (("goalie", config.MSG_CAUGHT), ("ball", config.MSG_SCORED)):
+        g, robot, _, _ = make(role)
+        g.handle_message("start")
+        assert ("defend", "up") not in robot.calls
+        g.handle_message(msg)
+        assert g.state == WON and ("defend", "up") in robot.calls

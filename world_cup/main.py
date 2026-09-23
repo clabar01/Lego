@@ -191,14 +191,14 @@ def game_keys(game):
     return {"s": start, "r": reset}
 
 
-def make_mqtt(args, status, topics, on_message, on_connect=None, name="robot"):
+def make_mqtt(args, status, topics, on_message, on_connect=None, name="robot", **kw):
     """Create (but don't start) the MQTT link. Callers wire everything up and
     THEN call link.start(), so on_connect can never fire half-wired."""
     if args.no_mqtt:
         status.set(mqtt="disabled (--no-mqtt)")
         return None
     return MqttLink(topics, on_message, status, on_connect=on_connect, name=name,
-                    host=args.broker, port=args.port)
+                    host=args.broker, port=args.port, **kw)
 
 
 class GatedPolicy:
@@ -279,7 +279,9 @@ def run_robot_side(args, status):
     link = make_mqtt(args, status, [config.GAME_TOPIC, config.DRIVE_TOPIC, config.AUX_TOPIC,
                                     config.DEFENSE_TOPIC],
                      on_message=lambda t, p: handler.on_message(t, p, time.monotonic()),
-                     on_connect=game.on_connected, name="robot")
+                     on_connect=game.on_connected, name="robot",
+                     # lost MQTT = lost the defense laptop: arm back to zero
+                     on_disconnect=(lambda: robot.defend("up")) if use_defense else None)
     game.publish = link.publish
     link.start()
 
@@ -417,13 +419,18 @@ def run_aux_station(args, status):
             link.stop()
 
 
+DEFENSE_SIDES = {"DEFEND_LEFT": "left", "DEFEND_UP": "up", "DEFEND_RIGHT": "right"}
+
+
 def run_defense_station(args, status):
-    """Laptop 2 (defense): two whistles swing the defense arm left / right.
+    """Laptop 2 (defense): three whistles swing the defense arm left / zero / right.
     Uses config.DEFENSE_BANDS (main() swaps them in) instead of the drive bands."""
     status.set(mode="defense laptop", robot="remote (via MQTT)")
     game = Game(args.role, status, mirror=True)
+    # Last will: if this laptop drops off, the broker tells the robot "arm up".
     link = make_mqtt(args, status, [config.GAME_TOPIC],
-                     on_message=lambda t, p: game.handle_message(p), name="defense")
+                     on_message=lambda t, p: game.handle_message(p), name="defense",
+                     will=(config.DEFENSE_TOPIC, defense_msg("up")))
     if link:
         link.start()
     debouncer = Debouncer()
@@ -437,20 +444,26 @@ def run_defense_station(args, status):
         confirmed, just = debouncer.update(det.band)
         label = config.COMMAND_LABELS[confirmed] if confirmed else "NO WHISTLE"
         status.set(decision=label, progress=debouncer.progress,
-                   detail="low whistle: arm left   high whistle: arm right")
+                   detail="low: arm left   middle: arm zero   high: arm right")
         if just:
-            swing("left" if confirmed == "DEFEND_LEFT" else "right")
+            swing(DEFENSE_SIDES[confirmed])
 
     audio = AudioEngine(args.device, on_detection=on_detection, noise_db=args.noise_db)
     audio.start()
     keys = {**audio_keys(audio), **game_keys(game),
             "j": keyhelp("arm left")(lambda: swing("left")),
-            "k": keyhelp("arm right")(lambda: swing("right"))}
+            "k": keyhelp("arm right")(lambda: swing("right")),
+            "u": keyhelp("arm zero")(lambda: swing("up"))}
     try:
         run_with_display(status, audio, keys, "ME193 defense laptop", args.no_display)
     finally:
         audio.stop()
         if link:
+            # A clean quit doesn't trigger the last will, so say it ourselves.
+            try:
+                link.publish(config.DEFENSE_TOPIC, defense_msg("up"), qos=1).wait_for_publish(1.0)
+            except Exception as e:
+                print(f"could not send arm zero: {e!r}")
             link.stop()
 
 

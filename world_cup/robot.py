@@ -42,7 +42,7 @@ def wheel_speeds(drive, profile):
     p = config.PROFILES[profile]
     if drive.speed_level < 0:
         s = level_to_speed(-drive.speed_level, profile)
-        return -s, -s               # backing up: straight, slowest level
+        return -s, -s               # backing up: straight
     if drive.speed_level <= 0:
         if drive.steer == 0:
             return 0, 0
@@ -182,6 +182,15 @@ class LegoHardware:
             self.arm.motor_run_to_relative_position(int(angle), speed=config.DEFENSE_SPEED,
                                                     blocking=False)
 
+    def arm_home(self, timeout=2.0):
+        """Arm back to zero (straight up) and wait for it - used on shutdown."""
+        if not self.arm:
+            return
+        self.arm.motor_run_to_relative_position(0, speed=config.DEFENSE_SPEED, blocking=False)
+        t_end = time.monotonic() + timeout
+        while not self.arm.done() and time.monotonic() < t_end:
+            time.sleep(0.05)
+
     def arm_set_up_here(self):
         """The arm points straight up right now: make this 0. Returns the
         absolute position to put in config.DEFENSE_UP_POSITION."""
@@ -265,6 +274,9 @@ class SimRobot:
         if self.use_defense:
             print(f"[sim] defense arm -> {angle:+d} deg from up")
 
+    def arm_home(self, timeout=2.0):
+        self.arm_to(0)
+
     def arm_set_up_here(self):
         return 0 if self.use_defense else None
 
@@ -342,6 +354,10 @@ class RobotController:
             self.hw.stop()
         except Exception as e:
             print(f"stop: {e!r}")
+        try:
+            self.hw.arm_home()                   # defense arm to zero before disconnecting
+        except Exception as e:
+            print(f"arm home: {e!r}")
         self.hw.disconnect()
 
     # -- robot thread ----------------------------------------------------------------

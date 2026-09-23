@@ -36,7 +36,9 @@ BAND_COLORS = {
     "TURN_LEFT": "#eb6834",   # orange
     "TURN_RIGHT": "#1baf7a",  # aqua
     "SPEED_UP": "#eda100",    # yellow
+    "WIN": "#008300",           # violin: green
     "DEFEND_LEFT": "#eb6834",   # defense laptop: same hues as the turns
+    "DEFEND_UP": "#2a78d6",
     "DEFEND_RIGHT": "#1baf7a",
 }
 GOOD = "#008300"
@@ -269,7 +271,7 @@ class Display:
         self.game_sub.set_text(f"role: {s['role']}    mode: {s['mode']}")
 
         level = s["speed_level"]
-        bar = "REVERSE" if level < 0 else "#" * level + "." * (config.SPEED_LEVELS - level)
+        bar = f"REVERSE {-level}" if level < 0 else "#" * level + "." * (config.SPEED_LEVELS - level)
         steer = {-1: "LEFT", 0: "straight", 1: "RIGHT"}[s["steer"]]
         wl, wr = s["wheels"]
         refl = s["reflection"]

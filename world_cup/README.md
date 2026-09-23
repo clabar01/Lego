@@ -300,17 +300,49 @@ A LEGO Single Motor on top of the robot swings a defense arm. One person whistle
 
 | Whistle | Hz | Arm |
 |---|---|---|
-| Low (C6 – F#6) | 1047 – 1480 | Swings all the way LEFT |
-| High (G6 – C7) | 1570 – 2093 | Swings all the way RIGHT |
+| Low (C6 – E6) | 1047 – 1330 | Swings all the way LEFT |
+| Middle (F6 – G#6) | 1400 – 1660 | Back to ZERO (straight up) |
+| High (A6 – C7) | 1740 – 2093 | Swings all the way RIGHT |
 
-Keys `j` / `k` do the same. The arm only moves while the game is PLAYING, like driving.
+Keys `j` / `u` / `k` do the same. Left and right only work while the game is PLAYING, like driving. Zero works any time.
 
-**The arm never enters the bottom third.** The light sensor sits under the motor, so the arm stays out of the bottom 120° of its circle. It swings between −110° and +110° from straight up, which leaves the forbidden 120° plus a 10° safety margin on each side. It always swings over the top to reach the other side. At startup the robot reads the motor's absolute position, sets "degrees from straight up" as the motor's relative position (a counter that doesn't wrap at 360°), and then only ever moves between −110 and +110 on that counter. The arm holds its position when hit.
+**The arm goes back to zero by itself** when:
+- the game ends (win or lose);
+- the defense laptop quits, or drops off the network. Its MQTT "last will" makes the broker send "arm zero" for it;
+- the robot laptop loses its MQTT connection;
+- the robot laptop program shuts down (it homes the arm before disconnecting).
+
+**Keeping the arm out of the bottom third** (with `DEFENSE_FORBIDDEN_DEG = 120`; a negative value lets the arm pass the bottom). The light sensor sits under the motor, so the arm stays out of the bottom 120° of its circle. It swings between −110° and +110° from straight up, which leaves the forbidden 120° plus a 10° safety margin on each side. It always swings over the top to reach the other side. At startup the robot reads the motor's absolute position, sets "degrees from straight up" as the motor's relative position (a counter that doesn't wrap at 360°), and then only ever moves between −110 and +110 on that counter. The arm holds its position when hit.
 
 **Setup, once:** on the robot laptop, turn the arm straight up by hand and press `z`. The log prints `DEFENSE_UP_POSITION = N`. Put that number in `config.py` so the arm knows where "up" is on every run. Then test with `j` (left), `k` (right) and `u` (up). If `j` swings right, set `DEFENSE_LEFT_SIGN = 1`. Change `DEFENSE_FORBIDDEN_DEG`, `DEFENSE_MARGIN_DEG` and `DEFENSE_SPEED` to adjust the swing.
 
 | Topic | Message | Notes |
 |---|---|---|
-| `.../<prefix>/defense` | `{"type":"defense","side":"left"}` | QoS 1, one per confirmed whistle. |
+| `.../<prefix>/defense` | `{"type":"defense","side":"left"}` | QoS 1, one per confirmed whistle. `side` is `left`, `right` or `up` (zero). `up` is also the defense laptop's last will. |
 
 Use `--no-defense` on the robot laptop if the Single Motor isn't attached.
+
+## 7. Violin driving (`violin.py`)
+
+`violin.py` is the same program as `main.py` (same flags, display, robot, MQTT and game), but it listens for violin notes instead of whistles. `main.py` still does whistling, unchanged.
+
+| Note | Command |
+|---|---|
+| D4 (open D) | STOP |
+| E4 | BACKWARD. Hold it and it backs up faster every 0.8 s |
+| F#4 | TURN LEFT |
+| G4 | TURN RIGHT |
+| A4 (open A) | SPEED UP. Hold it and it speeds up every 0.8 s |
+| D5 | WE WON. Hold it for 1 s; ball only |
+
+The car only moves **while you play**: 0.3 s after the last command note it stops. Remap the notes in `VIOLIN_NOTES` at the top of `violin.py`.
+
+**Violin driver + whistle shield (two laptops):**
+
+```
+ Laptop 1 (violin)   terminal 1:  python main.py --mode robot --role ball     (Bluetooth to the robot)
+                     terminal 2:  python violin.py --mode drive --device N
+ Laptop 2 (shield)                python main.py --mode defense --device N
+```
+
+The shield laptop uses the three defense whistles from section 6 (low = left, middle = zero, high = right).

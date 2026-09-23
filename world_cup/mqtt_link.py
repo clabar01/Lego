@@ -16,16 +16,21 @@ import config
 
 class MqttLink:
     def __init__(self, topics, on_message, status, on_connect=None, name="robot",
-                 host=config.BROKER_HOST, port=config.BROKER_PORT):
+                 host=config.BROKER_HOST, port=config.BROKER_PORT, will=None,
+                 on_disconnect=None):
         """
-        topics      list of topics to subscribe to
-        on_message  callback(topic: str, payload: str)
-        on_connect  callback() after every successful (re)connect
-        name        short tag for the client id, e.g. "robot" or "drive"
+        topics         list of topics to subscribe to
+        on_message     callback(topic: str, payload: str)
+        on_connect     callback() after every successful (re)connect
+        name           short tag for the client id, e.g. "robot" or "drive"
+        will           (topic, payload) the BROKER publishes for us if we drop
+                       off without saying goodbye (Wi-Fi lost, laptop closed)
+        on_disconnect  callback() whenever the connection drops
         """
         self.topics = topics
         self.on_message = on_message
         self.on_connect_cb = on_connect
+        self.on_disconnect_cb = on_disconnect
         self.status = status
         self.host, self.port = host, port
         self.connected = False
@@ -36,6 +41,11 @@ class MqttLink:
         self.client.on_disconnect = self._on_disconnect
         self.client.on_message = self._on_message
         self.client.reconnect_delay_set(min_delay=1, max_delay=10)
+        if will:
+            topic, payload = will
+            if isinstance(payload, dict):
+                payload = json.dumps(payload, separators=(",", ":"))
+            self.client.will_set(topic, payload, qos=1)
 
     def start(self):
         self.status.set(mqtt=f"connecting to {self.host}:{self.port}...")
@@ -50,7 +60,7 @@ class MqttLink:
         """Publish a string, or a dict as JSON. Safe to call from any thread."""
         if isinstance(payload, dict):
             payload = json.dumps(payload, separators=(",", ":"))
-        self.client.publish(topic, payload, qos=qos, retain=retain)
+        return self.client.publish(topic, payload, qos=qos, retain=retain)
 
     # -- paho callbacks (run on paho's thread) ---------------------------------
     def _on_connect(self, client, userdata, flags, reason_code, properties):
@@ -69,6 +79,8 @@ class MqttLink:
         self.connected = False
         self.status.set(mqtt="disconnected - retrying")
         self.status.log(f"MQTT disconnected ({reason_code})")
+        if self.on_disconnect_cb:
+            self.on_disconnect_cb()
 
     def _on_message(self, client, userdata, msg):
         try:

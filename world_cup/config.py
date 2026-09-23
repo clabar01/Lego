@@ -107,7 +107,9 @@ BANDS = [
 COMMAND_LABELS = {
     "STOP": "STOP",
     "BACKWARD": "BACKWARD",
+    "WIN": "WE WON",                # violin only (violin.py)
     "DEFEND_LEFT": "ARM LEFT",      # defense laptop only (DEFENSE_BANDS)
+    "DEFEND_UP": "ARM ZERO",
     "DEFEND_RIGHT": "ARM RIGHT",
     "TURN_LEFT": "TURN LEFT",
     "TURN_RIGHT": "TURN RIGHT",
@@ -144,8 +146,15 @@ GOAL_WINDOW_S = 1.5         # start of tweet 1 to end of tweet 2
 #     straightens out and keeps cruising at its current speed.
 #   - After NO_WHISTLE_TIMEOUT_S with no confirmed whistle, the car slows down
 #     one speed level every SLOWDOWN_STEP_S until it stops.
-TURN_HOLD_S = 0.5
-BACKWARD_HOLD_S = 0.5       # backing up stops this long after the whistle ends
+TURN_HOLD_S = 0.1
+BACKWARD_HOLD_S = 0.1       # backing up stops this long after the whistle ends
+
+# Options the VIOLIN turns on (violin.py). Whistling keeps these defaults.
+BACKWARD_RAMP = False       # True: holding BACKWARD backs up faster every SPEED_REPEAT_S
+STOP_WHEN_SILENT = False    # True: car stops as soon as no command note is heard...
+SILENCE_STOP_S = 0.3        # ...for this long (bridges bow changes)
+GOAL_TWEETS = True          # False: the "tweet-tweet" goal is off (violin uses a WIN note)
+WIN_HOLD_S = 1.0            # a WIN note must be held this long (a command band named "WIN")
 NO_WHISTLE_TIMEOUT_S = 4.0
 SLOWDOWN_STEP_S = 1.0
 
@@ -185,12 +194,15 @@ PROXIMITY_HOLD_FRAMES = 2
 # ============================================================================
 # DEFENSE ARM (Single Motor on top of the robot, run by the defense laptop)
 # ============================================================================
-# The defense laptop (--mode defense) only needs two whistles, so it uses its
-# own two wide bands instead of BANDS: low half of C6-C7 = arm left, high half
-# = arm right. Each whistle swings the arm all the way to that side.
+# The defense laptop (--mode defense) only needs three whistles, so it uses
+# its own three wide bands instead of BANDS: low = arm all the way left,
+# middle = arm back to zero (straight up), high = arm all the way right.
+# The arm also goes back to zero on game over (win or lose) and whenever the
+# defense laptop or the robot laptop disconnects.
 DEFENSE_BANDS = [
-    ("DEFEND_LEFT",  1047, 1480),   # low whistle  (C6 - F#6)
-    ("DEFEND_RIGHT", 1570, 2093),   # high whistle (G6 - C7)
+    ("DEFEND_LEFT",  1047, 1330),   # low whistle    (C6 - E6)
+    ("DEFEND_UP",    1400, 1660),   # middle whistle (F6 - G#6)
+    ("DEFEND_RIGHT", 1740, 2093),   # high whistle   (A6 - C7)
 ]
 
 # Angles are measured from the arm pointing straight UP (0 deg). The light
@@ -201,10 +213,10 @@ DEFENSE_BANDS = [
 DEFENSE_UP_POSITION = 0         # motor's absolute position (0-359) when the arm points
                                 # straight up. Find it: point the arm up by hand on the
                                 # robot laptop and press z; it prints the number.
-DEFENSE_FORBIDDEN_DEG = 120     # bottom third of the circle
+DEFENSE_FORBIDDEN_DEG =  -120    # bottom third of the circle
 DEFENSE_MARGIN_DEG = 10         # extra safety gap before the forbidden zone
-DEFENSE_LIMIT_DEG = 180 - DEFENSE_FORBIDDEN_DEG / 2 - DEFENSE_MARGIN_DEG   # = 110
-DEFENSE_SPEED = 60              # motor % while swinging
+DEFENSE_LIMIT_DEG = 180 - DEFENSE_FORBIDDEN_DEG / 2 - DEFENSE_MARGIN_DEG   # 110 if FORBIDDEN is 120
+DEFENSE_SPEED = 100              # motor % while swinging
 DEFENSE_LEFT_SIGN = -1          # if "ARM LEFT" swings right, change this to 1
 
 # ============================================================================

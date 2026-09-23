@@ -148,6 +148,7 @@ class Game:
             self.state = result
         if self.robot:
             self.robot.halt()
+            self.robot.defend("up")              # defense arm back to zero
         self.status.set(game=result)
         self.status.log(f"GAME OVER: {result} ({why})")
         if self.songs:

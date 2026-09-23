@@ -25,8 +25,10 @@ Message format: small JSON objects.
     {"type": "song", "name": "cheer"}     play a song on the robot laptop
 
   defense topic
-    {"type": "defense", "side": "left"|"right"}   swing the arm (QoS 1). Only
-                                          while the game is PLAYING, like driving.
+    {"type": "defense", "side": "left"|"right"|"up"}   swing the arm (QoS 1).
+        left/right only while the game is PLAYING, like driving. "up" (back to
+        zero) is always allowed; it is also the defense laptop's MQTT last
+        will, so the broker sends it if that laptop drops off.
 """
 
 import json
@@ -111,8 +113,8 @@ class RobotSideHandler:
                 if not self.songs.play(msg["name"], interrupt=False):
                     self.status.log("aux: song ignored (another song is playing)")
         elif topic == config.DEFENSE_TOPIC:
-            if kind == "defense" and msg.get("side") in ("left", "right"):
-                if self.game.state != PLAYING:
+            if kind == "defense" and msg.get("side") in ("left", "right", "up"):
+                if msg["side"] != "up" and self.game.state != PLAYING:
                     self.status.log(f"defense: ignored - game is {self.game.state}")
                     return
                 self.robot.defend(msg["side"])

@@ -106,3 +106,17 @@ def test_defense_only_while_playing():
     send(h, config.DEFENSE_TOPIC, defense_msg("right"))
     send(h, config.DEFENSE_TOPIC, {"type": "defense", "side": "down"})   # rejected
     assert robot.arm == ["left", "right"]
+
+
+def test_defense_zero_allowed_any_time():
+    h, game, robot, _, _ = setup()
+    send(h, config.DEFENSE_TOPIC, defense_msg("up"))      # e.g. the last will, before start
+    assert robot.arm == ["up"]
+
+
+def test_defense_laptop_last_will_is_arm_zero():
+    from mqtt_link import MqttLink
+    link = MqttLink([], lambda t, p: None, Status(), name="test",
+                    will=(config.DEFENSE_TOPIC, defense_msg("up")))
+    assert link.client._will_topic.decode() == config.DEFENSE_TOPIC
+    assert json.loads(link.client._will_payload) == {"type": "defense", "side": "up"}

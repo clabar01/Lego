@@ -120,15 +120,18 @@ def _in_forbidden_zone(angle_from_up_deg):
     return from_down < config.DEFENSE_FORBIDDEN_DEG / 2
 
 
-def test_defense_targets_and_swing_path_avoid_bottom_third():
+def test_defense_targets_and_swing_path_follow_config_limits():
     from robot import defense_target
     left, right = defense_target("left"), defense_target("right")
-    assert left == -right and defense_target("up") == 0
+    assert left == -right == round(config.DEFENSE_LEFT_SIGN * config.DEFENSE_LIMIT_DEG)
+    assert defense_target("up") == 0
+    assert _in_forbidden_zone(180) == (config.DEFENSE_FORBIDDEN_DEG > 0)   # helper check
     # The relative counter doesn't wrap, so a swing visits every angle
-    # between the two targets - through the top, never through the bottom.
-    lo, hi = min(left, right), max(left, right)
-    assert not any(_in_forbidden_zone(a) for a in range(lo, hi + 1))
-    assert _in_forbidden_zone(180)                     # sanity check of the helper
+    # between the two targets, through the top. With a positive
+    # DEFENSE_FORBIDDEN_DEG none of them may be in the bottom zone.
+    if config.DEFENSE_FORBIDDEN_DEG > 0:
+        lo, hi = min(left, right), max(left, right)
+        assert not any(_in_forbidden_zone(a) for a in range(lo, hi + 1))
 
 
 def test_angle_from_up_wraps_to_signed_degrees():

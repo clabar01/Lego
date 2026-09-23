@@ -23,7 +23,7 @@ import config
 @dataclass
 class DriveState:
     """What the car should be doing. Kept tiny so it can be sent over MQTT."""
-    speed_level: int = 0        # -1 = backing up, 0 = stopped .. config.SPEED_LEVELS
+    speed_level: int = 0        # <0 = backing up, 0 = stopped .. config.SPEED_LEVELS
     steer: int = 0              # -1 = left, 0 = straight, +1 = right
 
     def to_dict(self):
@@ -31,7 +31,7 @@ class DriveState:
 
     @classmethod
     def from_dict(cls, d):
-        level = max(-1, min(config.SPEED_LEVELS, int(d.get("speed_level", 0))))
+        level = max(-config.SPEED_LEVELS, min(config.SPEED_LEVELS, int(d.get("speed_level", 0))))
         steer = max(-1, min(1, int(d.get("steer", 0))))
         return cls(level, steer)
 
@@ -156,8 +156,13 @@ class DrivePolicy:
         STOP        speed level 0, straight
         TURN_LEFT   steer left for as long as the whistle is held
         TURN_RIGHT  steer right for as long as the whistle is held
-        BACKWARD    back up slowly and straight for as long as the whistle is held
-                    (stops BACKWARD_HOLD_S after it ends)
+        BACKWARD    back up straight for as long as the whistle is held (stops
+                    BACKWARD_HOLD_S after it ends). With config.BACKWARD_RAMP it
+                    backs up one level faster every SPEED_REPEAT_S, like SPEED_UP.
+        WIN         (violin) held for WIN_HOLD_S -> goal, i.e. we won
+
+    With config.STOP_WHEN_SILENT (violin) the car stops SILENCE_STOP_S after
+    the last command note instead of cruising.
 
     No valid whistle (see README "When no whistle is detected"):
         1. A turn keeps going for TURN_HOLD_S after the whistle ends (bridges
@@ -169,12 +174,15 @@ class DrivePolicy:
     """
 
     def __init__(self, frame_s=config.FRAME_S):
+        self.frame_s = frame_s
         self.debouncer = Debouncer(frame_s)
         self.goal = GoalDetector(frame_s)
         self.reset()
 
     def reset(self, t=0.0):
         self.drive = DriveState()
+        self._last_sound_t = t
+        self._win_fired = False
         self.debouncer.reset()
         self.goal.reset()
         self._last_whistle_t = t
@@ -186,9 +194,13 @@ class DrivePolicy:
     def update(self, band, t):
         """Feed one frame's band (or None). Returns a PolicyOutput."""
         confirmed, just = self.debouncer.update(band)
-        goal = self.goal.update(band, t)
+        goal = self.goal.update(band, t) and config.GOAL_TWEETS
         d = self.drive
         fired = None
+        if band is not None:
+            self._last_sound_t = t
+        if confirmed != "WIN":
+            self._win_fired = False
 
         if confirmed is not None:
             self._last_whistle_t = t
@@ -202,15 +214,26 @@ class DrivePolicy:
                 d.speed_level, d.steer = 0, 0
                 fired = confirmed if just else None
             elif confirmed == "BACKWARD":
-                d.speed_level, d.steer = -1, 0
+                if not config.BACKWARD_RAMP:
+                    d.speed_level = -1
+                    fired = confirmed if just else None
+                elif just or t - self._last_speed_bump_t >= config.SPEED_REPEAT_S:
+                    d.speed_level = max(-config.SPEED_LEVELS, min(d.speed_level, 0) - 1)
+                    self._last_speed_bump_t = t
+                    fired = confirmed
+                d.steer = 0
                 self._last_back_t = t
-                fired = confirmed if just else None
+            elif confirmed == "WIN":
+                held = self.debouncer.streak * self.frame_s
+                if not self._win_fired and held >= config.WIN_HOLD_S - 1e-9:
+                    goal, self._win_fired = True, True
             elif confirmed in ("TURN_LEFT", "TURN_RIGHT"):
                 d.steer = -1 if confirmed == "TURN_LEFT" else 1
                 self._last_turn_t = t
                 fired = confirmed if just else None
             decision = config.COMMAND_LABELS[confirmed]
-            detail = ("backing up" if d.speed_level < 0
+            detail = (f"backing up, level {-d.speed_level}/{config.SPEED_LEVELS}"
+                      if d.speed_level < 0
                       else f"speed level {d.speed_level}/{config.SPEED_LEVELS}")
         else:
             # ---- NO WHISTLE ---------------------------------------------
@@ -232,9 +255,13 @@ class DrivePolicy:
                 detail = "backing up"
             else:
                 detail = "stopped"
+            if config.STOP_WHEN_SILENT and t - self._last_sound_t > config.SILENCE_STOP_S:
+                d.speed_level, d.steer = 0, 0
+                detail = "stopped - not playing"
 
         if goal:
-            decision, detail = "GOAL", "double high whistle"
+            decision, detail = "GOAL", ("WIN note" if confirmed == "WIN"
+                                        else "double high whistle")
 
         return PolicyOutput(drive=DriveState(d.speed_level, d.steer), decision=decision,
                             detail=detail, goal=goal, fired=fired,

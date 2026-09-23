@@ -152,7 +152,7 @@ def test_turn_holds_briefly_then_straightens_and_cruises():
     feed(p, ["SPEED_UP"] * n(config.DEBOUNCE_S) + [None] * 3)
     outs, t = feed(p, ["TURN_LEFT"] * n(config.DEBOUNCE_S + 0.2))
     assert outs[-1].drive.steer == -1
-    outs, t = feed(p, [None] * n(config.TURN_HOLD_S - 0.1), t)
+    outs, t = feed(p, [None] * max(1, n(config.TURN_HOLD_S) - 1), t)
     assert outs[-1].drive.steer == -1          # still holding the turn
     outs, t = feed(p, [None] * n(0.3), t)
     assert outs[-1].drive.steer == 0 and outs[-1].drive.speed_level == 1
