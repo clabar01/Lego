@@ -114,22 +114,62 @@ class ProximityDetector:
 # Hardware
 # ----------------------------------------------------------------------------
 
-def _connect(device, what, serial, color):
-    """Connect with the same "not ready" retry as lelib.py: the hub advertises
-    a moment before it can accept a connection, so that error is transient."""
-    for attempt in range(5):
+def _connect(device, what, serial, color, attempts=5):
+    """Connect, retrying the two transient failures:
+      - "not ready": the hub advertises a moment before it accepts a connection
+      - not found:   the device is asleep or still waking up (common for the
+                     second or third device on a card), so ask for its button"""
+    for attempt in range(attempts):
+        last = attempt == attempts - 1
         try:
             device.connect(card_color=color, card_serial=serial)
-            break
         except Exception as e:
-            if "not ready" in str(e).lower() and attempt < 4:
+            if "not ready" in str(e).lower() and not last:
                 time.sleep(1)
-            else:
-                raise
+                continue
+            raise
+        if device.connected:
+            break
+        if not last:
+            print(f"  {what} not found yet - press its button to wake it "
+                  f"(try {attempt + 2}/{attempts})...")
+            time.sleep(1)
     if not device.connected:
         raise ConnectionError(
             f"Could not connect to {what} (card {serial}). Press the hub button to wake "
             f"it, check the Connection Card, and make sure no other script holds it.")
+
+
+def scan_lego_devices(seconds=6.0):
+    """List every LEGO Education device advertising nearby, with the
+    Connection Card it is paired to: [(kind, card_color, card_serial, name)].
+    Used by `python main.py --scan` to see why a device won't connect."""
+    import asyncio
+
+    from bleak import BleakScanner
+    from legoeducation import color_map, rpc_message
+    from legoeducation.basic_ble import SERVICE_UUID, BasicBLE
+
+    kinds = {rpc_message.PRODUCT_GROUP_DEVICE_SINGLE_MOTOR: "Single Motor",
+             rpc_message.PRODUCT_GROUP_DEVICE_DOUBLE_MOTOR: "Double Motor",
+             rpc_message.PRODUCT_GROUP_DEVICE_COLOR_SENSOR: "Color Sensor",
+             rpc_message.PRODUCT_GROUP_DEVICE_CONTROLLER: "Controller"}
+    colors = {v: k.removeprefix("LEGO_COLOR_") for k, v in vars(color_map).items()
+              if k.startswith("LEGO_COLOR_") and isinstance(v, int)}
+    found = {}
+
+    def on_adv(device, adv):
+        product, color, serial = BasicBLE._extract_manufacturer_info(adv)
+        if product is not None:
+            found[device.address] = (kinds.get(product, f"product {product}"),
+                                     colors.get(color, str(color)), f"{serial:04d}",
+                                     device.name or "")
+
+    async def run():
+        async with BleakScanner(detection_callback=on_adv, service_uuids=[SERVICE_UUID]):
+            await asyncio.sleep(seconds)
+    asyncio.run(run())
+    return sorted(found.values())
 
 
 class LegoHardware:
@@ -155,8 +195,19 @@ class LegoHardware:
             print("Color Sensor connected.")
         if self.arm:
             print(f"Connecting to Single Motor / defense arm (card {self.card_serial})...")
-            _connect(self.arm, "Single Motor", self.card_serial, self.card_color)
-            self._zero_arm()
+            try:
+                _connect(self.arm, "Single Motor", self.card_serial, self.card_color)
+                self._zero_arm()
+            except Exception as e:
+                # Driving still works without the shield, so don't take the
+                # whole robot down - run without it and say so loudly.
+                print(f"\n*** SHIELD NOT CONNECTED - driving only. ({e})\n"
+                      f"*** Run `python main.py --scan` to see which devices are on.\n")
+                try:
+                    self.arm.disconnect()
+                except Exception:
+                    pass
+                self.arm = None
 
     def _zero_arm(self):
         """Make the motor's RELATIVE position = signed degrees from straight up.

@@ -68,6 +68,8 @@ def build_parser():
                    help=f"Connection Card serial (default {config.CARD_SERIAL})")
     p.add_argument("--no-sensor", action="store_true",
                    help="don't connect the color sensor")
+    p.add_argument("--scan", action="store_true",
+                   help="list the LEGO devices nearby and their Connection Cards, then exit")
     p.add_argument("--no-defense", action="store_true",
                    help="--mode robot: don't connect the Single Motor defense arm")
     p.add_argument("--profile", choices=list(config.PROFILES), default=config.DEFAULT_PROFILE,
@@ -139,6 +141,8 @@ def make_robot(args, status, use_sensor=True, use_defense=False):
                           use_defense=use_defense)
     hw.connect()
     robot = RobotController(hw, status, profile=args.profile)
+    if use_defense and getattr(hw, "arm", True) is None:
+        status.log("SHIELD NOT CONNECTED - driving only (see console)")
     robot.start()
     return robot
 
@@ -471,6 +475,16 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     if args.list_devices:
         print_devices()
+        return 0
+    if args.scan:
+        from robot import scan_lego_devices
+        print("Scanning for LEGO devices (6 s)... press each device's button if it's asleep.")
+        devices = scan_lego_devices()
+        for kind, color, serial, name in devices:
+            mine = "  <- our card" if (color, serial) == (config.CARD_COLOR, args.card) else ""
+            print(f"  {kind:<13} card {color} {serial}{mine}")
+        if not devices:
+            print("  none found - are they switched on?")
         return 0
     if args.noise_margin is not None:
         config.NOISE_MARGIN_DB = args.noise_margin

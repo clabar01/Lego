@@ -17,7 +17,7 @@ A LEGO Education robot that you drive by whistling. A laptop listens through its
                filters                    PLAYING
                                              ▲  │
                                   mqtt_link  │  ▼  songs.py (victory / death)
-                                  "start", "ceci_caught", "ceci_scored"
+                                  "start", "robot_caught", "robot_scored"
  display.py: live waveform, spectrum, pitch history, decision, game state
 ```
 
@@ -144,7 +144,7 @@ The first 2 seconds of every run **measure the room's background noise, so stay 
 |---|---|---|
 | 1. Audio + display | `python main.py --calibrate` | The pitch follows your whistle; talking and clapping stay gray (rejected). |
 | 2. Robot | `python main.py --no-mqtt`, then press `s` | Whistles drive the car. Both wheels go forward on SPEED UP (if one wheel runs backward, swap `LEFT_FLIP`/`RIGHT_FLIP` in `config.py`). Put a hand in front of the sensor: the ball stops and the death song plays. |
-| 3. MQTT game | `python main.py --role ball` | "ceci_ready" is sent, nothing moves until "start", and the game ends correctly for both roles. |
+| 3. MQTT game | `python main.py --role ball` | "robot_ready" is sent, nothing moves until "start", and the game ends correctly for both roles. |
 | 4. Two laptops | see section 6 | The robot follows laptop 1, laptop 2 changes the profile, light and songs, and the car stops if laptop 1 quits. |
 
 ---
@@ -228,15 +228,15 @@ All thresholds live in `config.py` under **NOISE MASKING**.
 
 **Broker (development):** `broker.hivemq.com`, port `1883`. To switch to the course broker, change `BROKER_HOST` / `BROKER_PORT` in `config.py` (or use `--broker` / `--port`).
 
-**Topic:** `ME193/Rogers`. The whole class shares it, so every message for our match starts with our match name, **`ceci`** (`MATCH_PREFIX` in `config.py`). Messages that aren't ours are ignored.
+**Topic:** `ME193/Rogers`. The whole class shares it, so every message for our match starts with our match name, **`robot`** (`MATCH_PREFIX` in `config.py`). Messages that aren't ours are ignored.
 
 | Message (exact string) | Sent by | When | What the receivers do |
 |---|---|---|---|
-| `start` | Professor / referee | Match begins | Both robots: whistle control turns on. Also accepted: `ceci_start`. |
-| `ceci_ready` | Each robot | On connecting (and after a reset) while waiting for `start` | Informational. |
-| `ceci_caught` | **Ball** | Its light sensor sees the goalie right in front of it | Ball: already stopped its motors *before* sending, plays the **death** song, game **LOST**. Goalie: plays the **victory** song, game **WON**. |
-| `ceci_scored` | **Ball** | We whistle the GOAL command ("tweet-tweet") | Ball: **victory** song, game **WON**. Goalie: **death** song, game **LOST**. |
-| `ceci_reset` | Anyone (optional) | To play again | Both robots go back to "waiting for start". |
+| `start` | Professor / referee | Match begins | Both robots: whistle control turns on. Also accepted: `robot_start`. |
+| `robot_ready` | Each robot | On connecting (and after a reset) while waiting for `start` | Informational. |
+| `robot_caught` | **Ball** | Its light sensor sees the goalie right in front of it | Ball: already stopped its motors *before* sending, plays the **death** song, game **LOST**. Goalie: plays the **victory** song, game **WON**. |
+| `robot_scored` | **Ball** | We whistle the GOAL command ("tweet-tweet") | Ball: **victory** song, game **WON**. Goalie: **death** song, game **LOST**. |
+| `robot_reset` | Anyone (optional) | To play again | Both robots go back to "waiting for start". |
 
 Payloads are plain text strings, published with QoS 1.
 
@@ -284,7 +284,7 @@ Keys `1` `2` `3`, `l` and `c` do the same things.
 | `.../ceci/aux` | `{"type":"light","color":"GREEN"}` | Hub light. |
 | `.../ceci/aux` | `{"type":"song","name":"cheer"}` | Victory and death are reserved for the game and are never interrupted. |
 
-The robot laptop still runs the full game logic (start gating, light sensor, `ceci_caught` / `ceci_scored`, songs).
+The robot laptop still runs the full game logic (start gating, light sensor, `robot_caught` / `robot_scored`, songs).
 
 ### Driver + defender: one drives, one runs the defense arm
 
