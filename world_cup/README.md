@@ -103,7 +103,7 @@ The first 2 seconds of every run **measure the room's background noise, so stay 
 | `--sim` | Simulated robot, no Bluetooth. Test anywhere; press `o` for a fake obstacle. |
 | `--no-mqtt` | Offline. Press `s` to start the game yourself. |
 | `--profile slow\|medium\|fast` | Starting speed profile (default `medium`). |
-| `--broker HOST` `--port N` | MQTT broker (default `broker.hivemq.com:1883`). |
+| `--broker HOST` `--port N` | MQTT broker (default `test.mosquitto.org:1883`). |
 | `--card 0999` | Connection Card serial for the motor and sensor. |
 | `--no-sensor` | Don't connect the light sensor. |
 | `--noise-db X` | Fixed volume threshold in dBFS. Skips the ambient-noise measurement. |
@@ -226,7 +226,7 @@ All thresholds live in `config.py` under **NOISE MASKING**.
 
 ## 5. MQTT message protocol (agreed with our opponent)
 
-**Broker (development):** `broker.hivemq.com`, port `1883`. To switch to the course broker, change `BROKER_HOST` / `BROKER_PORT` in `config.py` (or use `--broker` / `--port`).
+**Broker (development):** `test.mosquitto.org`, port `1883`. To switch to the course broker, change `BROKER_HOST` / `BROKER_PORT` in `config.py` (or use `--broker` / `--port`).
 
 **Topic:** `ME193/Rogers`. The whole class shares it, so every message for our match starts with our match name, **`robot`** (`MATCH_PREFIX` in `config.py`). Messages that aren't ours are ignored.
 
