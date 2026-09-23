@@ -6,6 +6,8 @@ Examples
     python main.py --calibrate             # whistle and see the detected pitch
     python main.py --device 1              # whistle control, live display
     python main.py --sim                   # same, with a simulated robot
+    python main.py --role goalie           # play as the goalie
+    python main.py --sim --no-mqtt         # offline test: press s to start
 
 Keys in the display window are listed at the bottom of the window.
 """
@@ -18,6 +20,8 @@ import config
 from audio import AudioEngine, print_devices
 from calibrate import Calibrator
 from display import Display, keyhelp
+from game import Game
+from mqtt_link import MqttLink
 from policy import DrivePolicy
 from robot import LegoHardware, RobotController, SimRobot
 from songs import SongPlayer
@@ -30,6 +34,8 @@ def build_parser():
                    help="list audio input/output devices and exit")
     p.add_argument("--device", type=int, default=None,
                    help="audio input device index (default: system default mic)")
+    p.add_argument("--role", choices=["ball", "goalie"], default="ball",
+                   help="which robot we are in the match (default %(default)s)")
     p.add_argument("--calibrate", action="store_true",
                    help="calibration mode: whistle and see the detected frequency")
     p.add_argument("--noise-db", type=float, default=None,
@@ -50,6 +56,13 @@ def build_parser():
                    help="audio output device index for songs (default: system default)")
     p.add_argument("--hub-songs", action="store_true",
                    help="also beep the songs on the LEGO hub")
+    # MQTT
+    p.add_argument("--no-mqtt", action="store_true",
+                   help="offline: don't connect to the broker (press s to start)")
+    p.add_argument("--broker", default=config.BROKER_HOST,
+                   help=f"MQTT broker host (default {config.BROKER_HOST})")
+    p.add_argument("--port", type=int, default=config.BROKER_PORT,
+                   help=f"MQTT broker port (default {config.BROKER_PORT})")
     return p
 
 
@@ -129,38 +142,83 @@ def robot_keys(robot):
     return keys
 
 
+def game_keys(game):
+    @keyhelp("start (local test)")
+    def start():
+        game.start()
+
+    @keyhelp("reset game")
+    def reset():
+        game.reset()
+    return {"s": start, "r": reset}
+
+
+def make_mqtt(args, status, topics, on_message, on_connect=None, name="robot"):
+    if args.no_mqtt:
+        status.set(mqtt="disabled (--no-mqtt)")
+        return None
+    link = MqttLink(topics, on_message, status, on_connect=on_connect, name=name,
+                    host=args.broker, port=args.port)
+    link.start()
+    return link
+
+
+class GatedPolicy:
+    """Runs the whistle policy on the audio thread and resets it whenever the
+    game starts or resets, so whistles heard before 'start' can't carry over
+    (e.g. a speed level built up while waiting)."""
+
+    def __init__(self, game):
+        self.game = game
+        self.policy = DrivePolicy()
+        self._generation = game.generation
+
+    def update(self, det):
+        if self.game.generation != self._generation:
+            self._generation = self.game.generation
+            self.policy.reset(det.t)
+        out = self.policy.update(det.band, det.t)
+        if self.game.state != "PLAYING":
+            out.detail = f"ignored - {self.game.state.lower()}"
+        return out
+
+
 def run_single(args, status):
-    """Stage 2: audio -> decision policy -> robot (always driving, no game yet)."""
-    policy = DrivePolicy()
-    robot = make_robot(args, status)
+    """One laptop does everything: audio -> policy -> game -> robot, plus MQTT."""
+    status.set(mode="single")
+    robot = make_robot(args, status, use_sensor=(args.role == "ball"))
     songs = SongPlayer(args.output_device, status=status,
                        hub_beep=robot.beep if args.hub_songs else None)
-
-    # Stage 2: just report proximity so the sensor can be tested (game logic
-    # that stops the ball comes in stage 3).
-    robot.on_proximity = lambda: status.log("light sensor: something close in front")
-    robot.proximity_enabled = True
+    game = Game(args.role, status, robot=robot, songs=songs)
+    link = make_mqtt(args, status, [config.GAME_TOPIC],
+                     on_message=lambda topic, payload: game.handle_message(payload),
+                     on_connect=game.on_connected)
+    if link:
+        game.publish = link.publish
+    gated = GatedPolicy(game)
 
     def on_detection(det):
-        out = policy.update(det.band, det.t)
+        out = gated.update(det)
         status.set(decision=out.decision, detail=out.detail, progress=out.progress,
                    speed_level=out.drive.speed_level, steer=out.drive.steer)
-        robot.set_drive(out.drive)
+        game.drive(out.drive)
         if out.fired:
             status.log(f"command: {config.COMMAND_LABELS[out.fired]}")
         if out.goal:
-            status.log("GOAL whistle detected")
-            songs.play("victory")
+            game.goal()
 
     audio = AudioEngine(args.device, on_detection=on_detection, noise_db=args.noise_db)
     songs.on_play = audio.mute_for
     audio.start()
-    keys = {**audio_keys(audio), **robot_keys(robot)}
+    keys = {**audio_keys(audio), **robot_keys(robot), **game_keys(game)}
     try:
-        run_with_display(status, audio, keys, "ME193 World Cup", args.no_display)
+        run_with_display(status, audio, keys, f"ME193 World Cup - {args.role}",
+                         args.no_display)
     finally:
         audio.stop()
         robot.stop()
+        if link:
+            link.stop()
         print("Stopped.")
 
 
