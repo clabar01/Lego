@@ -1,0 +1,8 @@
+# Python 3.11+ required (legoeducation). PyAudio needs the PortAudio C library:
+#   macOS: brew install portaudio   (see README for a no-Homebrew option)
+legoeducation
+numpy
+matplotlib
+pyaudio
+paho-mqtt>=2.0
+pytest
