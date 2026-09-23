@@ -251,10 +251,10 @@ Payloads are plain text strings, published with QoS 1.
 Audio processing can run on either laptop and send commands over MQTT. One robot-side script executes them.
 
 ```
- Laptop 1 (driver)  ── ME193/Rogers/ceci/drive ──┐
+ Laptop 1 (driver)  ── ME193/Rogers/robot/drive ──┐
    python main.py --mode drive --device N        │
                                                  ▼
- Laptop 2 (DJ)      ── ME193/Rogers/ceci/aux ──► Robot laptop (Bluetooth to the robot)
+ Laptop 2 (DJ)      ── ME193/Rogers/robot/aux ──► Robot laptop (Bluetooth to the robot)
    python main.py --mode aux --device N          python main.py --mode robot --role ball
                                                  │ also handles the game topic ME193/Rogers
 ```
@@ -278,11 +278,11 @@ Keys `1` `2` `3`, `l` and `c` do the same things.
 
 | Topic | Message | Notes |
 |---|---|---|
-| `.../ceci/drive` | `{"type":"drive","speed_level":3,"steer":-1,"decision":"TURN LEFT"}` | 10 per second, QoS 0. The robot stops if none arrive for 1 s. |
-| `.../ceci/drive` | `{"type":"goal"}` | The goal whistle (the robot checks that it is the ball and the game is playing). |
-| `.../ceci/aux` | `{"type":"profile","value":"fast"}` | Retained, so a restarted robot remembers the last profile. |
-| `.../ceci/aux` | `{"type":"light","color":"GREEN"}` | Hub light. |
-| `.../ceci/aux` | `{"type":"song","name":"cheer"}` | Victory and death are reserved for the game and are never interrupted. |
+| `.../robot/drive` | `{"type":"drive","speed_level":3,"steer":-1,"decision":"TURN LEFT"}` | 10 per second, QoS 0. The robot stops if none arrive for 1 s. |
+| `.../robot/drive` | `{"type":"goal"}` | The goal whistle (the robot checks that it is the ball and the game is playing). |
+| `.../robot/aux` | `{"type":"profile","value":"fast"}` | Retained, so a restarted robot remembers the last profile. |
+| `.../robot/aux` | `{"type":"light","color":"GREEN"}` | Hub light. |
+| `.../robot/aux` | `{"type":"song","name":"cheer"}` | Victory and death are reserved for the game and are never interrupted. |
 
 The robot laptop still runs the full game logic (start gating, light sensor, `robot_caught` / `robot_scored`, songs).
 
